@@ -1,4 +1,4 @@
-name: build and publish snap
+name: Build and publish snap
 on:
   push:
     tags:
@@ -22,14 +22,29 @@ jobs:
     - uses: snapcore/action-build@v1
       id: build-snap
 
-    - run: |
+    - name: Test install snap locally
+      run: |
         sudo snap install --dangerous ${{ steps.build-snap.outputs.snap }}
+
+    - name: Upload snap as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: snap-package
+        path: ${{ steps.build-snap.outputs.snap }}
+        retention-days: 2
+
   publish:
     if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     needs: build
     steps:
-    - uses: snapcore/action-publish@v1
+    - name: Download snap artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: snap-package
+    
+    - name: Publish snap
+      uses: snapcore/action-publish@v1
       env:
         SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.STORE_LOGIN }}
       with:
