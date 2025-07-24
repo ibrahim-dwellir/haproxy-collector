@@ -8,7 +8,7 @@ package-dir = {"" = "src"}
 
 [project]
 name = "haproxy_collector"
-version = "0.1.0"
+version = "0.2.0"
 description = "Haproxy collector package"
 readme = "README.md"
 license = { text = "MIT" }
