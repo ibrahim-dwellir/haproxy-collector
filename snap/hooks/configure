@@ -1,0 +1,8 @@
+#!/bin/sh
+
+ARGS_FILE="$SNAP_COMMON/args"
+
+args="$(snapctl get args)"
+
+logger -t ${SNAP_NAME} -- "Writing \"$args\" to $ARGS_FILE"
+echo "$args" > "$ARGS_FILE"

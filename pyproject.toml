@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["haproxy_collector"]
+package-dir = {"" = "src"}
+
+[project]
+name = "haproxy_collector"
+version = "0.1.0"
+description = "Haproxy collector package"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ibrahim Alhassan", email = "ibrahim@dwellir.com" }]
+dependencies = [
+    "aiopg==1.4.0",
+    "anyio==4.9.0",
+    "async-timeout==4.0.3",
+    "asyncio==3.4.3",
+    "databases==0.9.0",
+    "httpx==0.28.1",
+    "psycopg2-binary==2.9.10",
+    "asyncpg==0.30.0"
+]

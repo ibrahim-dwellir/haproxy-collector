@@ -1,0 +1,14 @@
+#!/bin/bash
+set -eu
+
+ARGS_FILE="$SNAP_COMMON/args"
+
+if [ -f "$ARGS_FILE" ]; then
+    set -a  # Automatically export all variables
+    eval "$(cat "$ARGS_FILE")"
+    set +a
+else
+    echo "No ARGS_FILE found at $ARGS_FILE"
+fi
+
+python3 -m haproxy_collector
