@@ -8,16 +8,12 @@ from subprocess import run
 import logging
 
 import ops
-import os.path
 
 from config import ConfigValidator, ConfigManager
 from service_manager import ServiceManager
-from github_client import GitHubClient
 from file_manager import FileManager
 
 logger = logging.getLogger(__name__)
-dest_dir = FileManager.DEST_DIR
-
 
 class CollectorCharm(ops.CharmBase):
     """Charm the application."""
@@ -29,57 +25,20 @@ class CollectorCharm(ops.CharmBase):
         self.config_manager = ConfigManager(self.model.config)
         self.service_manager = ServiceManager(lambda status: setattr(self.model.unit, 'status', status))
 
-        framework.observe(self.on.install, self._on_install)
         framework.observe(self.on.config_changed, self._on_config_changed)
+        framework.observe(self.on.update_status, self._on_update_status)
 
         framework.observe(self.on["db-integrator"].relation_joined, self._on_request_db)
-        framework.observe(self.on["db-integrator"].relation_changed, self._on_update_credentials)
+        framework.observe(self.on["db-integrator"].relation_changed, self._on_update_db_credentials)
 
         framework.observe(self.on['start'].action, self._on_service_start)
         framework.observe(self.on['stop'].action, self._on_service_stop)
         framework.observe(self.on['restart'].action, self._on_service_restart)
-        framework.observe(self.on['reload'].action, self._on_reload)
-
-    def _on_install(self, event: ops.InstallEvent):
-        """Handle the install event."""
-        config = self.config_manager.get_config()
-        try:
-            logger.info("Validating configuration...")
-            self.model.unit.status = ops.MaintenanceStatus("Validating configuration...")
-
-            ConfigValidator.validate_config(config)
-
-            logger.info("Configuration validated successfully.")
-            self.model.unit.status = ops.MaintenanceStatus("Configuration validated successfully.")
-        except ValueError as e:
-            logger.error(f"Configuration validation failed: {e}")
-            self.model.unit.status = ops.BlockedStatus(f"Configuration error: {e}")
-            return
-
-        # Store the configuration
-        FileManager.store_config(config)
-        
-        # Generate the environment file
-        FileManager.generate_environment_file()
-        
-        try:
-            # Install dependencies
-            logger.info("Installing dependencies...")
-            self.model.unit.status = ops.MaintenanceStatus("Installing dependencies...")
-            run(["apt", "install", "-y", "python3-pip"])
-
-            logger.info("Dependencies installed successfully.")
-            self.model.unit.status = ops.ActiveStatus("Running")
-        except Exception as e:
-            logger.error(f"Failed to install dependencies: {e}")
-            self.model.unit.status = ops.BlockedStatus(f"Dependency installation failed: {e}")
-            return
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent):
         """Handle configuration changes."""
         logger.info("Configuration changed, updating...")
         self.model.unit.status = ops.MaintenanceStatus("Updating configuration...")
-
 
         # Read the old and new configurations
         old_config = FileManager.read_config()
@@ -105,43 +64,26 @@ class CollectorCharm(ops.CharmBase):
             logger.info(f"Configuration changed: {changed_configs}")
             FileManager.store_config(new_config)
 
-            if ("release_tag" in changed_configs or "github_repo" in changed_configs or "sub_directory" in changed_configs):
+            if ("channel" in changed_configs or "revision" in changed_configs):
                 # Fetch the collector from GitHub if the release tag, repo or sub-directory has changed
                 try:
-                    GitHubClient.fetch_collector(new_config, dest_dir)
-                    logger.info("Collector fetched successfully.")
-
-                    self.unit.set_workload_version(new_config.get("release_tag"))
+                    # Install dependencies
+                    self.model.unit.status = ops.MaintenanceStatus("Installing haproxy-collector")
+                    self._install_collector(changed_configs)
+                    self.unit.set_workload_version(self._get_version())
                 except Exception as e:
-                    logger.error(f"Failed to fetch collector: {e}")
-                    self.model.unit.status = ops.BlockedStatus(f"Failed to fetch collector: {e}")
-                    return
-                
-                try:
-                    logger.info("Installing dependencies...")
-                    self.model.unit.status = ops.MaintenanceStatus("Installing dependencies...")
-                    FileManager.install_dependencies()
-                    logger.info("Dependencies installed successfully.")
-                except Exception as e:
-                    logger.error(f"Failed to install dependencies: {e}")
+                    logger.error(f"Failed to install haproxy-collector: {e}")
                     self.model.unit.status = ops.BlockedStatus(f"Dependency installation failed: {e}")
                     return
-                else:
-                    logger.info("No changes in collector configuration, skipping fetch.")
-            
-            if "entrypoint" in changed_configs or "frequency" in changed_configs:
-                try:
-                    # Generate the service file
-                    FileManager.generate_service_file(new_config)
-                except Exception as e:
-                    logger.error(f"Failed to generate service file: {e}")
-                    self.model.unit.status = ops.BlockedStatus(f"Service file generation failed: {e}")
-                    return
 
-            # Generate the environment file with the new configuration
-            FileManager.generate_environment_file()
-            # Reload the systemd daemon to recognize the new service and timer
-            self.service_manager.reload_daemon()
+            try:
+                # Register collector service args
+                self.model.unit.status = ops.MaintenanceStatus("Registering service args...")
+                self._register_service_args()
+            except Exception as e:
+                logger.error(f"Failed to register service args: {e}")
+                self.model.unit.status = ops.BlockedStatus(f"Service args registration failed: {e}")
+                return
             
             logger.info("Configuration updated successfully.")
             self._on_service_restart(event)
@@ -155,7 +97,7 @@ class CollectorCharm(ops.CharmBase):
         event.relation.data[self.unit]["name"] = self.config.get("collector-name")
         logger.info("Database relation requested successfully.")
 
-    def _on_update_credentials(self, event):
+    def _on_update_db_credentials(self, event):
         """Update the database credentials."""
         logger.info("Updating database credentials...")
         owner_id = event.relation.data[event.unit].get("owner_id")
@@ -172,9 +114,24 @@ class CollectorCharm(ops.CharmBase):
         }
         FileManager.store_db_config(db_config)
 
-        # Update the environment file with the new database credentials
-        FileManager.generate_environment_file()
-        logger.info("Database credentials updated successfully.")
+        # Update the service args with the new database credentials
+        try:
+            self.model.unit.status = ops.MaintenanceStatus("Update service args...")
+            self._register_service_args()
+            self._on_service_restart(None)
+            logger.info("Database credentials updated successfully.")
+        except Exception as e:
+            logger.error(f"Failed to update database credentials: {e}")
+            self.model.unit.status = ops.BlockedStatus(f"Database credentials update failed: {e}")
+            return
+        
+    def _on_update_status(self, event: ops.EventBase):
+        # Update the unit status with the current workload version
+        try:
+            self.unit.set_workload_version(self._get_version())
+        except Exception as e:
+            logger.error(f"Failed to update workload version: {e}")
+            return
 
     def _on_service_start(self, event: ops.ActionEvent):
         """Start the collector service."""
@@ -208,94 +165,36 @@ class CollectorCharm(ops.CharmBase):
             logger.error(f"Failed to restart service: {e}")
             self.model.unit.status = ops.BlockedStatus(f"Service restart failed: {e}")
             return
-
-    def _on_reload(self, event: ops.ActionEvent):
-        """Refresh the collector service."""
-        self.model.unit.status = ops.MaintenanceStatus("Refreshing collector service...")
-        logger.info("Refreshing collector service with new configuration...")
-
-        config = self.config_manager.get_config()
-
-        # Validate the configuration
-        self.model.unit.status = ops.MaintenanceStatus("Validating configuration...")
-        logger.info("Validating configuration...")
-        ConfigValidator.validate_config(config)
-        logger.info("Configuration validated successfully.")
-        
-        # Store the configuration
-        self.model.unit.status = ops.MaintenanceStatus("Storing configuration...")
-        logger.info("Storing configuration...")
-        FileManager.store_config(config)
-        logger.info("Configuration stored successfully.")
-
-        # Stop the service
-        logger.info("Stopping collector service...")
-        self.service_manager.stop_service()
-        logger.info("Collector service stopped successfully.")
-
+    
+    def _install_collector(self, config):
+        logger.info("Installing haproxy-collector")
+        haproxy_install_command = ["snap", "install", "haproxy-collector"]
+        if config.get("revision"):
+            haproxy_install_command.append(f"--revision={config['revision']}")
+        elif config.get("channel"):
+            haproxy_install_command.append(f"--channel={config['channel']}")
+        run(haproxy_install_command)    
+        logger.info("Haproxy installed successfully.")
+    
+    def _get_version(self):
+        """Get the version of the collector."""
         try:
-            # Fetch the collector from GitHub if needed
-            self.model.unit.status = ops.MaintenanceStatus("Fetching collector from GitHub...")
-            logger.info("Fetching collector from GitHub...")
-            GitHubClient.fetch_collector(config, dest_dir)
-            logger.info("Collector fetched successfully.")
+            output = run(
+                ["snap", "info", "haproxy-collector"], text=True
+            )
+            for line in output.splitlines():
+                if line.startswith("installed:"):
+                    return line.split()[1]
         except Exception as e:
-            logger.error(f"Failed to fetch collector: {e}")
-            self.model.unit.status = ops.BlockedStatus(f"Failed to fetch collector from Github: {e}")
-            return
+            print(f"Error getting collector version: {e}")
+        return "unknown"
 
-        # Install dependencies
-        self.model.unit.status = ops.MaintenanceStatus("Installing dependencies...")
-        logger.info("Installing dependencies...")
-        try:
-            FileManager.install_dependencies()
-            logger.info("Dependencies installed successfully.")
-        except Exception as e:
-            logger.error(f"Failed to install dependencies: {e}")
-            self.model.unit.status = ops.BlockedStatus(f"Dependency installation failed: {e}")
-            return
-
-                
-        # Install dependencies if the requirements file is present
-        if os.path.exists(f"{dest_dir}/requirements.txt"):
-            logger.info("Installing dependencies from requirements.txt...")
-            self.model.unit.status = ops.MaintenanceStatus("Installing pip dependencies...")
-            try:
-                run(["pip3", "install", "-r", f"{dest_dir}/requirements.txt"], check=True)
-                logger.info("Dependencies installed successfully.")
-            except Exception as e:
-                logger.error(f"Failed to install dependencies: {e}")
-                self.model.unit.status = ops.BlockedStatus(f"Dependency installation failed: {e}")
-                return
-
-        try:
-            # Generate the environment file
-            self.model.unit.status = ops.MaintenanceStatus("Generating environment file...")
-            logger.info("Generating environment file...")
-            FileManager.generate_environment_file()
-            logger.info("Environment file generated successfully.")
-
-            # Generate the service file
-            self.model.unit.status = ops.MaintenanceStatus("Generating service file...")
-            logger.info("Generating service file...")
-            FileManager.generate_service_file(config)
-            logger.info("Service file generated successfully.")
-
-            # Set the workload version
-            logger.info("Setting workload version...")
-            self.unit.set_workload_version(config.get("release_tag"))
-            logger.info("Workload version set successfully.")
-
-            # Start the service
-            self.service_manager.start_service()
-
-            # Update the status
-            self.model.unit.status = ops.ActiveStatus("Running")
-            logger.info("Collector service refreshed successfully.")
-        except Exception as e:
-            logger.error(f"Failed to refresh collector service: {e}")
-            self.model.unit.status = ops.BlockedStatus(f"Service refresh failed: {e}")
-            return
+    def _register_service_args(self):
+        # Register collector service args
+        logger.info("Registering service args...")
+        service_args = FileManager.get_service_args()
+        run(["snap", "set", "haproxy-collector", f"args={service_args}"], check=True)
+        logger.info("Service args Registered successfully.")
 
 if __name__ == "__main__":  # pragma: nocover
     ops.main(CollectorCharm)  # type: ignore

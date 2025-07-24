@@ -60,6 +60,6 @@ class ConfigManager:
             "haproxy_url": self.model_config.get("haproxy-url"),
             "haproxy_username": self.model_config.get("haproxy-username"),
             "haproxy_password": self.model_config.get("haproxy-password"),
-            "version": self.model_config.get("version"),
-            "auto_update": self.model_config.get("auto-update"),
+            "channel": self.model_config.get("channel"),
+            "revision": self.model_config.get("revision"),
         }

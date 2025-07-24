@@ -79,4 +79,19 @@ class FileManager:
         except json.JSONDecodeError:
             logger.error("Error decoding db configuration file.")
             return {}
-    
+        
+    @classmethod
+    def get_service_args(cls) -> None:
+        """Register args for the collector service.
+        
+        Args:
+            config: Configuration dictionary containing HAProxy credentials
+        """
+        config = cls.read_config() # Read main config
+        config.update(cls.read_db_config()) # Merge DB config into main config
+
+        args = f"HAPROXY_URL={config['haproxy_url']} HAPROXY_USERNAME={config['haproxy_username']} HAPROXY_PASSWORD={config['haproxy_password']}"
+        # Write additional configurations if they exist
+        if "owner_id" in config and "db_url" in config:
+            args += f" OWNER_ID={config['owner_id']} DB_URL={config['db_url']}"
+        return args

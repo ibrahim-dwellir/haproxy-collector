@@ -1,7 +1,7 @@
 # This file configures Charmcraft.
 # See https://canonical-charmcraft.readthedocs-hosted.com/en/stable/reference/files/charmcraft-yaml-file/
 type: charm
-name: charm
+name: haproxy-collector
 title: HAProxy Collector Charm
 summary: A charm for collecting data from HAProxy instances.
 description: |
@@ -55,26 +55,24 @@ config:
         The password to use for the HAProxy instance.
         This is used to authenticate with the HAProxy instance.
       type: string
-    version:
+    revision:
       type: string
-      default: latest
       description: |
-        Version of the collector to use.
-    auto-update:
-      type: boolean
-      default: false
+        Revison of the collector to use.
+    channel:
+      type: string
+      default: lastest/stable
       description: |
-        Whether to automatically update the collector when a new version is available.
+        Channel of the collector to use.
+        This is used to determine which version of the collector to use.
 
 actions:
   start:
-    description: Start the collector
+    description: Start the haproxy collector
   stop:
-    description: Stop the collector
+    description: Stop the haproxy collector
   restart:
-    description: Restart the collector
-  reload:
-    description: Reload the collector
+    description: Restart the haproxy collector
 
 requires:
   db-integrator:
