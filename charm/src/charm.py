@@ -179,10 +179,8 @@ class CollectorCharm(ops.CharmBase):
     def _get_version(self):
         """Get the version of the collector."""
         try:
-            output = run(
-                ["snap", "info", "haproxy-collector"], text=True
-            )
-            for line in output.splitlines():
+            output = run(["snap", "info", "haproxy-collector"], text=True, capture_output=True)
+            for line in output.stdout.splitlines():
                 if line.startswith("installed:"):
                     return line.split()[1]
         except Exception as e:
