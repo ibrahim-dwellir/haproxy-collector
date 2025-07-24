@@ -16,15 +16,11 @@ confinement: strict # use 'strict' once you have the right plugs and slots
 parts:
   main:
     plugin: python
-    source: git@github.com:ibrahim-dwellir/haproxy-collector.git
-    source-type: git
-    source-branch: master
+    source: .
   bin:
       plugin: dump
-      source-type: git
-      source: git@github.com:ibrahim-dwellir/haproxy-collector.git
-      source-branch: master
-      source-subdir: snap/bin
+      source-type: local
+      source: snap/bin
       override-build: |
         mkdir -p $SNAPCRAFT_PART_INSTALL/bin
         cp haproxy-collector $SNAPCRAFT_PART_INSTALL/bin/haproxy-collector
